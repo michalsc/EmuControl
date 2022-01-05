@@ -686,18 +686,17 @@ int main(int wantGUI)
     if (DOSBase == NULL)
         return -1;
 
-    args = ReadArgs(RDA_TEMPLATE, result, NULL);
-
-    if (args)
+    if (!wantGUI)
     {
+        args = ReadArgs(RDA_TEMPLATE, result, NULL);
 
-        if (!wantGUI) {
+        if (args)
+        {
             wantGUI = result[OPT_GUI];
+
+            FreeArgs(args);
         }
-
-        FreeArgs(args);
     }
-
 
     if (wantGUI)
     {
