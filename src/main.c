@@ -547,6 +547,22 @@ ULONG ChangeSoftFlush()
     return 0;
 }
 
+ULONG ChangeSoftThresh()
+{
+    ULONG value;
+
+    get(SoftThresh, MUIA_Selected, &value);
+
+    APTR ssp = SuperState();
+
+    setSOFT_THRESH(value);
+
+    if (ssp)
+        UserState(ssp);
+    
+    return 0;
+}
+
 ULONG ChangeFastCache()
 {
     ULONG value;
@@ -593,6 +609,10 @@ struct Hook hook_InlineRange = {
 
 struct Hook hook_SoftFlush = {
     .h_Entry = ChangeSoftFlush
+};
+
+struct Hook hook_SoftThresh = {
+    .h_Entry = ChangeSoftThresh
 };
 
 struct Hook hook_FastCache = {
@@ -780,7 +800,7 @@ void MUIMain()
         {
             ULONG isOpen;
             APTR ssp;
-            ULONG tmp, cacr;
+            ULONG tmp, cacr, thresh, debug_low, debug_high, debug_ctrl;
 
             DoMethod(MainWindow, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
                 (ULONG)app, 2, MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit);
@@ -797,17 +817,35 @@ void MUIMain()
                 ihn.ihn_Object = updaterObj;
                 ihn.ihn_Method = 0xdeadbeef;
 
+                char tmp_str[32];
+
                 DoMethod(app, MUIM_Application_AddInputHandler, &ihn);
 
                 ssp = SuperState();
+
                 asm volatile("movec #0xeb, %0; movec CACR, %1":"=r"(tmp), "=r"(cacr));
+                asm volatile("movec #0xea, %0; movec #0xed, %1":"=r"(thresh), "=r"(debug_ctrl));
+                asm volatile("movec #0xee, %0; movec #0xef, %1":"=r"(debug_low), "=r"(debug_high));
+
                 if (ssp)
                     UserState(ssp);
+
+                set(SoftThresh, MUIA_Numeric_Value, thresh);
+                if (debug_ctrl & 3)
+                    set(EnableDebug, MUIA_Selected, TRUE);
+                if (debug_ctrl & 4)
+                    set(EnableDisasm, MUIA_Selected, TRUE);
 
                 if (tmp & 0xff000000)
                     set(INSNDepth, MUIA_Numeric_Value, ((tmp >> 24) & 0xff));
                 else
                     set(INSNDepth, MUIA_Numeric_Value, 256);
+
+                RawDoFmt("%08x", &debug_low, stuffChar, tmp_str);
+                set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
+
+                RawDoFmt("%08x", &debug_high, stuffChar, tmp_str);
+                set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
 
                 if (tmp & 0x000000f0)
                     set(LoopCount, MUIA_Numeric_Value, ((tmp >> 4) & 0xf));
@@ -826,6 +864,8 @@ void MUIMain()
                     (ULONG)app, 2, MUIM_CallHook, &hook_LoopCount);
                 DoMethod(InlineRange, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
                     (ULONG)app, 2, MUIM_CallHook, &hook_InlineRange);
+                DoMethod(SoftThresh, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_SoftThresh);
                 DoMethod(SoftFlush, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
                     (ULONG)app, 2, MUIM_CallHook, &hook_SoftFlush);
                 DoMethod(FastCache, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
