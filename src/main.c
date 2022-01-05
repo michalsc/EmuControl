@@ -62,7 +62,8 @@ static const char version[] __attribute__((used)) = "$VER: " VERSION_STRING;
 
 Object *app;
 Object *MainWindow, *INSNDepth, *InlineRange, *LoopCount, *SoftFlush, *CacheFlush, *FastCache;
-Object *MainArea, *MIPS_M68k, *MIPS_ARM, *JITUsage, *Effectiveness, *CacheMiss;
+Object *MainArea, *MIPS_M68k, *MIPS_ARM, *JITUsage, *Effectiveness, *CacheMiss, *SoftThresh;
+Object *JITCount, *EnableDebug, *EnableDisasm, *DebugMin, *DebugMax, *CoreTemp, *CoreVolt;
 
 unsigned long long getARMCount()
 {
@@ -166,6 +167,20 @@ static inline ULONG getINSN_DEPTH()
     return res;
 }
 
+static inline ULONG getSOFT_THRESH()
+{
+    ULONG res;
+
+    asm volatile("movec #0xea, %0":"=r"(res));
+
+    return res;
+}
+
+static inline void setSOFT_THRESH(ULONG thresh)
+{
+    asm volatile("movec %0, #0xea"::"r"(thresh));
+}
+
 static inline void setINSN_DEPTH(ULONG depth)
 {
     ULONG reg;
@@ -226,6 +241,15 @@ static inline void setCACHE_IE(ULONG value)
     asm volatile("movec %0, CACR"::"r"(reg));
 }
 
+static inline ULONG getJITCount()
+{
+    ULONG res;
+
+    asm volatile("movec #0xe9, %0":"=r"(res));
+
+    return res;
+}
+
 ULONG update()
 {
     APTR ssp = SuperState();
@@ -243,6 +267,7 @@ ULONG update()
     ULONG cnt_speed = getCounterSpeed() / 1000000;
     ULONG jit_free = getJITFree();
     ULONG jit_total = getJITSize();
+    ULONG jit_count = getJITCount();
 
     if (ssp)
         UserState(ssp);
@@ -280,6 +305,11 @@ ULONG update()
         if (cmiss_ps > gauge_max)
             set(CacheMiss, MUIA_Gauge_Max, cmiss_ps);
         set(CacheMiss, MUIA_Gauge_Current, cmiss_ps);
+
+        get(JITCount, MUIA_Gauge_Max, &gauge_max);
+        if (jit_count > gauge_max)
+            set(JITCount, MUIA_Gauge_Max, jit_count);
+        set(JITCount, MUIA_Gauge_Current, jit_count);
     }
 
     ULONG jit_used = 100 * (jit_total - jit_free) / jit_total;
@@ -442,6 +472,8 @@ struct Hook hook_FlushCache = {
     .h_Entry = DoFlushCache
 };
 
+BOOL previewOnly;
+
 void MUIMain()
 {
     struct MUI_CustomClass *logSlider = MUI_CreateCustomClass(NULL, MUIC_Slider, NULL, 0, SliderDispatcher);
@@ -465,78 +497,146 @@ void MUIMain()
                         Child, updaterObj = NewObject(updater->mcc_Class, NULL, 
                             MUIA_ShowMe, FALSE,
                         TAG_DONE),
-                        Child, MainArea = VGroup,
+                        Child, MainArea = HGroup,
                             InnerSpacing(2, 2),
                             Child, VGroup,
-                                GroupFrameT("JIT Controls"),
-                                Child, ColGroup(2),
-                                    Child, Label("JIT instruction depth"),
-                                    Child, INSNDepth = SliderObject,
-                                        MUIA_Numeric_Min, 1,
-                                        MUIA_Numeric_Max, 256,
-                                        MUIA_Numeric_Value, 1,
+                                Child, VGroup,
+                                    GroupFrameT("JIT Controls"),
+                                    Child, ColGroup(2),
+                                        Child, Label("JIT instruction depth"),
+                                        Child, INSNDepth = SliderObject,
+                                            MUIA_Numeric_Min, 1,
+                                            MUIA_Numeric_Max, 256,
+                                            MUIA_Numeric_Value, 1,
+                                        End,
+                                        Child, Label("JIT inlining range"),
+                                        Child, InlineRange = NewObject(logSlider->mcc_Class, NULL,
+                                            MUIA_Numeric_Min, 0,
+                                            MUIA_Numeric_Max, 16,
+                                            MUIA_Numeric_Value, 0,
+                                        TAG_DONE),
+                                        Child, Label("Inline loop count"),
+                                        Child, LoopCount = SliderObject,
+                                            MUIA_Numeric_Min, 1,
+                                            MUIA_Numeric_Max, 16,
+                                            MUIA_Numeric_Value, 1,
+                                        End,
+                                        Child, Label("Soft flush threshold"),
+                                        Child, SoftThresh = SliderObject,
+                                            MUIA_Numeric_Min, 1,
+                                            MUIA_Numeric_Max, 1000,
+                                            MUIA_Numeric_Value, 1,
+                                        End,                                
                                     End,
-                                    Child, Label("JIT inlining range"),
-                                    Child, InlineRange = NewObject(logSlider->mcc_Class, NULL,
-                                        MUIA_Numeric_Min, 0,
-                                        MUIA_Numeric_Max, 16,
-                                        MUIA_Numeric_Value, 0,
-                                    TAG_DONE),
-                                    Child, Label("Inline loop count"),
-                                    Child, LoopCount = SliderObject,
-                                        MUIA_Numeric_Min, 1,
-                                        MUIA_Numeric_Max, 16,
-                                        MUIA_Numeric_Value, 1,
+                                    Child, HGroup,
+                                        Child, SoftFlush = MUI_MakeObject(MUIO_Button, "Soft flush"),
+                                        Child, FastCache = MUI_MakeObject(MUIO_Button, "Fast cache"),
+                                        Child, CacheFlush = MUI_MakeObject(MUIO_Button, "Flush JIT cache"),
                                     End,
-                                End,
-                                Child, HGroup,
-                                    Child, SoftFlush = MUI_MakeObject(MUIO_Button, "Soft flush"),
-                                    Child, FastCache = MUI_MakeObject(MUIO_Button, "Fast cache"),
-                                    Child, CacheFlush = MUI_MakeObject(MUIO_Button, "Flush JIT cache"),
                                 End,
                             End,
                             Child, VGroup,
+                                Child, VGroup,
+                                    GroupFrameT("Debug Controls"),
+                                    Child, ColGroup(2),
+                                        Child, Label("Low debug addres (hex)"),
+                                        Child, DebugMin = StringObject,
+                                            StringFrame,
+                                            MUIA_String_Contents, "00000000",
+                                            MUIA_String_MaxLen, 9,
+                                            MUIA_String_Accept, "0123456789abcdefABCDEF",
+                                        End,
+                                        Child, Label("High debug addres (hex)"),
+                                        Child, DebugMax = StringObject,
+                                            StringFrame,
+                                            MUIA_String_Contents, "ffffffff",                                        
+                                            MUIA_String_MaxLen, 9,
+                                            MUIA_String_Accept, "0123456789abcdefABCDEF",
+                                        End,
+                                    End,
+                                    Child, HGroup,
+                                        Child, EnableDebug = MUI_MakeObject(MUIO_Button, "Debug"),
+                                        Child, EnableDisasm = MUI_MakeObject(MUIO_Button, "Disassemble"),
+                                    End,
+                                End,
+                                Child, VSpace(-1),
+                                Child, VGroup,
+                                    GroupFrameT("RaspberryPi Status"),
+                                    Child, HGroup,
+                                        Child, ColGroup(2),
+                                            Child, Label("Core temperature"),
+                                            Child, CoreTemp = TextObject,
+                                                TextFrame,
+                                                MUIA_Text_Contents, "20.0 C",
+                                            End,
+                                        End,
+                                        Child, ColGroup(2),
+                                            Child, Label("Core voltage"),
+                                            Child, CoreVolt = TextObject,
+                                                TextFrame,
+                                                MUIA_Text_Contents, "0.000 V",
+                                            End,
+                                        End,
+                                    End,
+                                End,
+                            End,
+                        End,
+                        Child, HGroup,
+                            InnerSpacing(2, 2),
+                            Child, VGroup,
                                 GroupFrameT("JIT Statistics"),
-                                Child, ColGroup(2),
-                                    Child, Label("Cache usage:"),
-                                    Child, JITUsage = GaugeObject,
-                                        GaugeFrame,
-                                        MUIA_Gauge_Max, 100,
-                                        MUIA_Gauge_Current, 0,
-                                        MUIA_Gauge_Horiz, TRUE,
-                                        MUIA_Gauge_InfoText, (LONG)"%ld%% in use",
+                                Child, HGroup,
+                                    Child, ColGroup(2),
+                                        Child, Label("Cache usage:"),
+                                        Child, JITUsage = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 100,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld%% in use",
+                                        End,
+                                        Child, Label("JIT units:"),
+                                        Child, JITCount = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 10,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld units in cache",
+                                        End,
+                                        Child, Label("Cache misses:"),
+                                        Child, CacheMiss = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 10,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld per second",
+                                        End,
                                     End,
-                                    Child, Label("Cache miss:"),
-                                    Child, CacheMiss = GaugeObject,
-                                        GaugeFrame,
-                                        MUIA_Gauge_Max, 10,
-                                        MUIA_Gauge_Current, 0,
-                                        MUIA_Gauge_Horiz, TRUE,
-                                        MUIA_Gauge_InfoText, (LONG)"%ld per second",
-                                    End,
-                                    Child, Label("M68k speed:"),
-                                    Child, MIPS_M68k = GaugeObject,
-                                        GaugeFrame,
-                                        MUIA_Gauge_Max, 10,
-                                        MUIA_Gauge_Current, 0,
-                                        MUIA_Gauge_Horiz, TRUE,
-                                        MUIA_Gauge_InfoText, (LONG)"%ld MIPS",
-                                    End,
-                                    Child, Label("ARM speed:"),
-                                    Child, MIPS_ARM = GaugeObject,
-                                        GaugeFrame,
-                                        MUIA_Gauge_Max, 10,
-                                        MUIA_Gauge_Current, 0,
-                                        MUIA_Gauge_Horiz, TRUE,
-                                        MUIA_Gauge_InfoText, (LONG)"%ld MIPS",
-                                    End,
-                                    Child, Label("Effectiveness:"),
-                                    Child, Effectiveness = GaugeObject,
-                                        GaugeFrame,
-                                        MUIA_Gauge_Max, 100,
-                                        MUIA_Gauge_Current, 0,
-                                        MUIA_Gauge_Horiz, TRUE,
-                                        MUIA_Gauge_InfoText, (LONG)"%ld%%",
+                                    Child, ColGroup(2),
+                                        Child, Label("M68k speed:"),
+                                        Child, MIPS_M68k = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 10,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld MIPS",
+                                        End,
+                                        Child, Label("ARM speed:"),
+                                        Child, MIPS_ARM = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 10,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld MIPS",
+                                        End,
+                                        Child, Label("Effectiveness:"),
+                                        Child, Effectiveness = GaugeObject,
+                                            GaugeFrame,
+                                            MUIA_Gauge_Max, 100,
+                                            MUIA_Gauge_Current, 0,
+                                            MUIA_Gauge_Horiz, TRUE,
+                                            MUIA_Gauge_InfoText, (LONG)"%ld%%",
+                                        End,
                                     End,
                                 End,
                             End,
@@ -551,59 +651,64 @@ void MUIMain()
             APTR ssp;
             ULONG tmp, cacr;
 
-            ihn.ihn_Flags = MUIIHNF_TIMER;
-            ihn.ihn_Millis = 500;
-            ihn.ihn_Object = updaterObj;
-            ihn.ihn_Method = 0xdeadbeef;
-
-            DoMethod(app, MUIM_Application_AddInputHandler, &ihn);
-
             DoMethod(MainWindow, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
                 (ULONG)app, 2, MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit);
 
             set(SoftFlush, MUIA_InputMode, MUIV_InputMode_Toggle);
             set(FastCache, MUIA_InputMode, MUIV_InputMode_Toggle);
+            set(EnableDebug, MUIA_InputMode, MUIV_InputMode_Toggle);
+            set(EnableDisasm, MUIA_InputMode, MUIV_InputMode_Toggle);
 
-            ssp = SuperState();
-            asm volatile("movec #0xeb, %0; movec CACR, %1":"=r"(tmp), "=r"(cacr));
-            if (ssp)
-                UserState(ssp);
+            if (!previewOnly)
+            {
+                ihn.ihn_Flags = MUIIHNF_TIMER;
+                ihn.ihn_Millis = 500;
+                ihn.ihn_Object = updaterObj;
+                ihn.ihn_Method = 0xdeadbeef;
 
-            if (tmp & 0xff000000)
-                set(INSNDepth, MUIA_Numeric_Value, ((tmp >> 24) & 0xff));
-            else
-                set(INSNDepth, MUIA_Numeric_Value, 256);
+                DoMethod(app, MUIM_Application_AddInputHandler, &ihn);
 
-            if (tmp & 0x000000f0)
-                set(LoopCount, MUIA_Numeric_Value, ((tmp >> 4) & 0xf));
-            else
-                set(LoopCount, MUIA_Numeric_Value, 16);
+                ssp = SuperState();
+                asm volatile("movec #0xeb, %0; movec CACR, %1":"=r"(tmp), "=r"(cacr));
+                if (ssp)
+                    UserState(ssp);
 
-            if (tmp & 1)
-                set(SoftFlush, MUIA_Selected, TRUE);
-            
-            if (cacr & 0x8000)
-                set(FastCache, MUIA_Selected, TRUE);
+                if (tmp & 0xff000000)
+                    set(INSNDepth, MUIA_Numeric_Value, ((tmp >> 24) & 0xff));
+                else
+                    set(INSNDepth, MUIA_Numeric_Value, 256);
 
-            DoMethod(INSNDepth, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
-                (ULONG)app, 2, MUIM_CallHook, &hook_INSNDepth);
-            DoMethod(LoopCount, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
-                (ULONG)app, 2, MUIM_CallHook, &hook_LoopCount);
-            DoMethod(InlineRange, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
-                (ULONG)app, 2, MUIM_CallHook, &hook_InlineRange);
-            DoMethod(SoftFlush, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
-                (ULONG)app, 2, MUIM_CallHook, &hook_SoftFlush);
-            DoMethod(FastCache, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
-                (ULONG)app, 2, MUIM_CallHook, &hook_FastCache);
-            DoMethod(CacheFlush, MUIM_Notify, MUIA_Pressed, FALSE,
-                (ULONG)app, 2, MUIM_CallHook, &hook_FlushCache);
+                if (tmp & 0x000000f0)
+                    set(LoopCount, MUIA_Numeric_Value, ((tmp >> 4) & 0xf));
+                else
+                    set(LoopCount, MUIA_Numeric_Value, 16);
 
-            tmp = ((tmp >> 8) & 0xffff);
-            
-            for (int i=0; i <= 16; i++) {
-                if ((1 << i) > tmp) {
-                    set(InlineRange, MUIA_Numeric_Value, i);
-                    break;
+                if (tmp & 1)
+                    set(SoftFlush, MUIA_Selected, TRUE);
+                
+                if (cacr & 0x8000)
+                    set(FastCache, MUIA_Selected, TRUE);
+
+                DoMethod(INSNDepth, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_INSNDepth);
+                DoMethod(LoopCount, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_LoopCount);
+                DoMethod(InlineRange, MUIM_Notify, MUIA_Numeric_Value, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_InlineRange);
+                DoMethod(SoftFlush, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_SoftFlush);
+                DoMethod(FastCache, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_FastCache);
+                DoMethod(CacheFlush, MUIM_Notify, MUIA_Pressed, FALSE,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_FlushCache);
+
+                tmp = ((tmp >> 8) & 0xffff);
+                
+                for (int i=0; i <= 16; i++) {
+                    if ((1 << i) > tmp) {
+                        set(InlineRange, MUIA_Numeric_Value, i);
+                        break;
+                    }
                 }
             }
 
@@ -621,7 +726,9 @@ void MUIMain()
                             break;
                     }
                 }
-                DoMethod(app, MUIM_Application_RemInputHandler, &ihn);
+                if (!previewOnly) {
+                    DoMethod(app, MUIM_Application_RemInputHandler, &ihn);
+                }
                 set(MainWindow, MUIA_Window_Open, FALSE);
             }
             MUI_DisposeObject(app);
@@ -662,7 +769,7 @@ void GUIMain()
     }
 }
 
-#define RDA_TEMPLATE "ICNT=InstructionCount/K/N,IRNG=InliningRange/K/N,LCNT=LoopCount/K/N,CACHE/S,SF=SoftFlush/S,SFL=SoftFlushLimit/K/N,GUI/S"
+#define RDA_TEMPLATE "ICNT=InstructionCount/K/N,IRNG=InliningRange/K/N,LCNT=LoopCount/K/N,CACHE/S,SF=SoftFlush/S,SFL=SoftFlushLimit/K/N,GUI/S,PREVIEW/S"
 
 enum {
     OPT_INSN_COUNT,
@@ -672,6 +779,7 @@ enum {
     OPT_SOFT_FLUSH,
     OPT_SOFT_FLUSH_LIMIT,
     OPT_GUI,
+    OPT_PREVIEW,
     OPT_COUNT
 };
 
@@ -693,6 +801,7 @@ int main(int wantGUI)
         if (args)
         {
             wantGUI = result[OPT_GUI];
+            previewOnly = result[OPT_PREVIEW];
 
             FreeArgs(args);
         }
