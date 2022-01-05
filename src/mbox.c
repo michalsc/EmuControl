@@ -93,9 +93,10 @@ ULONG get_core_temperature()
     FBReq[6] = 0;
     FBReq[7] = 0;
 
-    CacheClearE(FBReq, len, CACRF_ClearD);
+    CachePreDMA(FBReq, &len, 0);
     mbox_send(8, (ULONG)FBReq);
     mbox_recv(8);
+    CachePostDMA(FBReq, &len, 0);
 
     return LE32(FBReq[6]);
 }
@@ -116,9 +117,10 @@ ULONG get_core_voltage()
     FBReq[6] = 0;
     FBReq[7] = 0;
 
-    CacheClearE(FBReq, len, CACRF_ClearD);
+    CachePreDMA(FBReq, &len, 0);
     mbox_send(8, (ULONG)FBReq);
     mbox_recv(8);
+    CachePostDMA(FBReq, &len, 0);
 
     return LE32(FBReq[6]);
 }
