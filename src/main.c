@@ -347,6 +347,38 @@ static inline ULONG getJITCount()
     return res;
 }
 
+static inline void setDEBUG_EN(ULONG value)
+{
+    ULONG reg;
+    
+    asm volatile("movec #0xed, %0":"=r"(reg));
+    reg &= ~3;
+    if (value)
+        reg |= 1;
+    asm volatile("movec %0, #0xed"::"r"(reg));
+}
+
+static inline void setDEBUG_DISASM(ULONG value)
+{
+    ULONG reg;
+    
+    asm volatile("movec #0xed, %0":"=r"(reg));
+    reg &= ~4;
+    if (value)
+        reg |= 4;
+    asm volatile("movec %0, #0xed"::"r"(reg));
+}
+
+static inline void setDEBUG_LOW(ULONG value)
+{
+    asm volatile("movec %0, #0xee"::"r"(value));
+}
+
+static inline void setDEBUG_HIGH(ULONG value)
+{
+    asm volatile("movec %0, #0xef"::"r"(value));
+}
+
 asm("stuffChar: move.b  d0, (a3)+; rts");
 APTR stuffChar;
 
@@ -551,7 +583,7 @@ ULONG ChangeSoftThresh()
 {
     ULONG value;
 
-    get(SoftThresh, MUIA_Selected, &value);
+    get(SoftThresh, MUIA_Numeric_Value, &value);
 
     APTR ssp = SuperState();
 
@@ -595,6 +627,98 @@ ULONG DoFlushCache()
     return 0;
 }
 
+ULONG UpdateDebugLo()
+{
+    ULONG tmp;
+    char *c;
+    char *debug_low;
+
+    get(DebugMin, MUIA_String_Contents, (ULONG*)&debug_low);
+
+    tmp = 0;
+    c = debug_low;
+    while (*c) {
+
+        tmp = tmp << 4;
+
+        if (*c >= '0' && *c <= '9')
+            tmp |= (*c - '0') & 0xf;
+        else if (*c >= 'A' && *c <= 'F')
+            tmp |= (*c - 'A' + 10) & 0xf;
+        else if (*c >= 'a' && *c <= 'f')
+            tmp |= (*c - 'a' + 10) & 0xf;
+        
+        c++;
+    }
+
+    APTR ssp = SuperState();
+    setDEBUG_LOW(tmp);
+    if (ssp)
+        UserState(ssp);
+}
+
+ULONG UpdateDebugHi()
+{
+    ULONG tmp;
+    char *c;
+    char *debug_high;
+
+    get(DebugMax, MUIA_String_Contents, (ULONG*)&debug_high);
+
+    tmp = 0;
+    c = debug_high;
+    while (*c) {
+
+        tmp = tmp << 4;
+
+        if (*c >= '0' && *c <= '9')
+            tmp |= (*c - '0') & 0xf;
+        else if (*c >= 'A' && *c <= 'F')
+            tmp |= (*c - 'A' + 10) & 0xf;
+        else if (*c >= 'a' && *c <= 'f')
+            tmp |= (*c - 'a' + 10) & 0xf;
+        
+        c++;
+    }
+
+    APTR ssp = SuperState();
+    setDEBUG_HIGH(tmp);
+    if (ssp)
+        UserState(ssp);
+}
+
+ULONG ChangeDebugEnable()
+{
+    ULONG value;
+
+    get(EnableDebug, MUIA_Selected, &value);
+
+    APTR ssp = SuperState();
+
+    setDEBUG_EN(value);
+
+    if (ssp)
+        UserState(ssp);
+    
+    return 0;
+}
+
+ULONG ChangeDebugDisasm()
+{
+    ULONG value;
+
+    get(EnableDisasm, MUIA_Selected, &value);
+
+    APTR ssp = SuperState();
+
+    setDEBUG_DISASM(value);
+
+    if (ssp)
+        UserState(ssp);
+    
+    return 0;
+}
+
 struct Hook hook_INSNDepth = {
     .h_Entry = ChangeINSNDepth
 };
@@ -609,6 +733,22 @@ struct Hook hook_InlineRange = {
 
 struct Hook hook_SoftFlush = {
     .h_Entry = ChangeSoftFlush
+};
+
+struct Hook hook_EnableDebug = {
+    .h_Entry = ChangeDebugEnable
+};
+
+struct Hook hook_UpdateDebugLo = {
+    .h_Entry = UpdateDebugLo
+};
+
+struct Hook hook_UpdateDebugHi = {
+    .h_Entry = UpdateDebugHi
+};
+
+struct Hook hook_EnableDisasm = {
+    .h_Entry = ChangeDebugDisasm
 };
 
 struct Hook hook_SoftThresh = {
@@ -841,10 +981,10 @@ void MUIMain()
                 else
                     set(INSNDepth, MUIA_Numeric_Value, 256);
 
-                RawDoFmt("%08x", &debug_low, stuffChar, tmp_str);
+                RawDoFmt("%08lx", &debug_low, stuffChar, tmp_str);
                 set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
 
-                RawDoFmt("%08x", &debug_high, stuffChar, tmp_str);
+                RawDoFmt("%08lx", &debug_high, stuffChar, tmp_str);
                 set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
 
                 if (tmp & 0x000000f0)
@@ -870,8 +1010,19 @@ void MUIMain()
                     (ULONG)app, 2, MUIM_CallHook, &hook_SoftFlush);
                 DoMethod(FastCache, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
                     (ULONG)app, 2, MUIM_CallHook, &hook_FastCache);
+                DoMethod(EnableDebug, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_EnableDebug);
+                DoMethod(EnableDisasm, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_EnableDisasm);
                 DoMethod(CacheFlush, MUIM_Notify, MUIA_Pressed, FALSE,
                     (ULONG)app, 2, MUIM_CallHook, &hook_FlushCache);
+
+                DoMethod(DebugMin, MUIM_Notify, MUIA_String_Acknowledge, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_UpdateDebugLo);
+                DoMethod(DebugMin, MUIM_Notify, MUIA_String_Acknowledge, MUIV_EveryTime,
+                    (ULONG)MainWindow, 3, MUIM_Set, MUIA_Window_ActiveObject, DebugMax);
+                DoMethod(DebugMax, MUIM_Notify, MUIA_String_Acknowledge, MUIV_EveryTime,
+                    (ULONG)app, 2, MUIM_CallHook, &hook_UpdateDebugHi);
 
                 tmp = ((tmp >> 8) & 0xffff);
                 
