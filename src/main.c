@@ -20,6 +20,8 @@
 #include <clib/alib_protos.h>
 #include <utility/tagitem.h>
 
+#include "mbox.h"
+
 int main(int);
 
 /* Startup code including workbench message support */
@@ -55,6 +57,7 @@ struct GfxBase *        GfxBase;
 struct Library *        GadToolsBase;
 struct DosLibrary *     DOSBase;
 struct Library *        MUIMasterBase;
+APTR                    MailBox;
 
 #define APPNAME "EmuControl"
 
@@ -64,6 +67,100 @@ Object *app;
 Object *MainWindow, *INSNDepth, *InlineRange, *LoopCount, *SoftFlush, *CacheFlush, *FastCache;
 Object *MainArea, *MIPS_M68k, *MIPS_ARM, *JITUsage, *Effectiveness, *CacheMiss, *SoftThresh;
 Object *JITCount, *EnableDebug, *EnableDisasm, *DebugMin, *DebugMax, *CoreTemp, *CoreVolt;
+
+/*
+    Some properties, like e.g. #size-cells, are not always available in a key, but in that case the properties
+    should be searched for in the parent. The process repeats recursively until either root key is found
+    or the property is found, whichever occurs first
+*/
+CONST_APTR GetPropValueRecursive(APTR key, CONST_STRPTR property, APTR DeviceTreeBase)
+{
+    do {
+        /* Find the property first */
+        APTR property = DT_FindProperty(key, property);
+
+        if (property)
+        {
+            /* If property is found, get its value and exit */
+            return DT_GetPropValue(property);
+        }
+        
+        /* Property was not found, go to the parent and repeat */
+        key = DT_GetParent(key);
+    } while (key);
+
+    return NULL;
+}
+
+void InitMailBox()
+{
+    APTR key;
+    APTR DeviceTreeBase = OpenResource("devicetree.resource");
+
+    if (DeviceTreeBase)
+    {
+        /* Get VC4 physical address of mailbox interface. Subsequently it will be translated to m68k physical address */
+        key = DT_OpenKey("/aliases");
+        if (key)
+        {
+            CONST_STRPTR mbox_alias = DT_GetPropValue(DT_FindProperty(key, "mailbox"));
+
+            DT_CloseKey(key);
+            
+            if (mbox_alias != NULL)
+            {
+                key = DT_OpenKey(mbox_alias);
+
+                if (key)
+                {
+                    int size_cells = 1;
+                    int address_cells = 1;
+
+                    const ULONG * siz = GetPropValueRecursive(key, "#size_cells", DeviceTreeBase);
+                    const ULONG * addr = GetPropValueRecursive(key, "#address-cells", DeviceTreeBase);
+
+                    if (siz != NULL)
+                        size_cells = *siz;
+                    
+                    if (addr != NULL)
+                        address_cells = *addr;
+
+                    const ULONG *reg = DT_GetPropValue(DT_FindProperty(key, "reg"));
+
+                    MailBox = (APTR)reg[address_cells - 1];
+
+                    DT_CloseKey(key);
+                }
+            }
+        }
+
+        /* Open /soc key and learn about VC4 to CPU mapping. Use it to adjust the addresses obtained above */
+        key = DT_OpenKey("/soc");
+        if (key)
+        {
+            int size_cells = 1;
+            int address_cells = 1;
+
+            const ULONG * siz = GetPropValueRecursive(key, "#size_cells", DeviceTreeBase);
+            const ULONG * addr = GetPropValueRecursive(key, "#address-cells", DeviceTreeBase);
+
+            if (siz != NULL)
+                size_cells = *siz;
+            
+            if (addr != NULL)
+                address_cells = *addr;
+
+            const ULONG *reg = DT_GetPropValue(DT_FindProperty(key, "ranges"));
+
+            ULONG phys_vc4 = reg[address_cells - 1];
+            ULONG phys_cpu = reg[2 * address_cells - 1];
+
+            MailBox = (APTR)((ULONG)MailBox - phys_vc4 + phys_cpu);
+
+            DT_CloseKey(key);
+        }
+    }
+}
 
 unsigned long long getARMCount()
 {
@@ -250,6 +347,9 @@ static inline ULONG getJITCount()
     return res;
 }
 
+asm("stuffChar: move.b  d0, (a3)+; rts");
+APTR stuffChar;
+
 ULONG update()
 {
     APTR ssp = SuperState();
@@ -316,14 +416,45 @@ ULONG update()
 
     set(JITUsage, MUIA_Gauge_Current, jit_used);
 
+    if (MailBox)
+    {
+        ULONG temp = get_core_temperature();
+        LONG volt = get_core_voltage();
+        static char str_temp[10];
+        static char str_volt[10];
+
+        if (temp != 0)
+        {
+            temp = (temp + 50) / 100;
+            ULONG args[] = {
+                temp / 10,
+                (temp % 10),
+            };
+
+            RawDoFmt("%ld.%ld", args, stuffChar, &str_temp);
+
+            set(CoreTemp, MUIA_Text_Contents, (ULONG)str_temp);
+        }
+
+        if (volt >= -16 && volt <= 8)
+        {
+            ULONG args[] = {
+                volt*25 + 1200,
+            };
+
+            RawDoFmt("%ld mV", args, stuffChar, &str_volt);
+
+            set(CoreVolt, MUIA_Text_Contents, (ULONG)str_volt);
+        }
+    }
+
     old_arm_cnt = arm_cnt;
     old_m68k_cnt = m68k_cnt;
     old_cnt = cnt;
     old_cmiss = cmiss;
 }
 
-asm("stuffChar: move.b  d0, (a3)+; rts");
-APTR stuffChar;
+
 
 ULONG SliderDispatcher(struct IClass *ic asm("a0"), Msg message asm("a1"), Object *o asm("a2"))
 {
@@ -561,20 +692,20 @@ void MUIMain()
                                 End,
                                 Child, VSpace(-1),
                                 Child, VGroup,
-                                    GroupFrameT("RaspberryPi Status"),
+                                    GroupFrameT("RasPi Core Status"),
                                     Child, HGroup,
                                         Child, ColGroup(2),
-                                            Child, Label("Core temperature"),
+                                            Child, Label("Temperature"),
                                             Child, CoreTemp = TextObject,
                                                 TextFrame,
-                                                MUIA_Text_Contents, "20.0 C",
+                                                MUIA_Text_Contents, "0.0",
                                             End,
                                         End,
                                         Child, ColGroup(2),
-                                            Child, Label("Core voltage"),
+                                            Child, Label("Voltage"),
                                             Child, CoreVolt = TextObject,
                                                 TextFrame,
-                                                MUIA_Text_Contents, "0.000 V",
+                                                MUIA_Text_Contents, "0",
                                             End,
                                         End,
                                     End,
@@ -790,6 +921,8 @@ int main(int wantGUI)
     struct RDArgs *args;
     SysBase = *(struct ExecBase **)4;
     
+    InitMailBox();
+
     DOSBase = (struct DosLibrary *)OpenLibrary("dos.library", 37);
     if (DOSBase == NULL)
         return -1;
