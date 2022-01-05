@@ -815,7 +815,7 @@ void MUIMain()
                                         Child, Label("Soft flush threshold"),
                                         Child, SoftThresh = SliderObject,
                                             MUIA_Numeric_Min, 1,
-                                            MUIA_Numeric_Max, 1000,
+                                            MUIA_Numeric_Max, 4000,
                                             MUIA_Numeric_Value, 1,
                                         End,                                
                                     End,
