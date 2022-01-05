@@ -8,12 +8,14 @@
 #include <graphics/gfx.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
+#include <dos/rdargs.h>
 #include <libraries/mui.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/graphics.h>
 #include <proto/intuition.h>
 #include <proto/gadtools.h>
+#include <proto/devicetree.h>
 #include <clib/muimaster_protos.h>
 #include <clib/alib_protos.h>
 #include <utility/tagitem.h>
@@ -660,20 +662,52 @@ void GUIMain()
     }
 }
 
-int main(int fromWorkbench)
+#define RDA_TEMPLATE "ICNT=InstructionCount/K/N,IRNG=InliningRange/K/N,LCNT=LoopCount/K/N,CACHE/S,SF=SoftFlush/S,SFL=SoftFlushLimit/K/N,GUI/S"
+
+enum {
+    OPT_INSN_COUNT,
+    OPT_INLINE_RANGE,
+    OPT_LOOP_CNT,
+    OPT_FAST_CACHE,
+    OPT_SOFT_FLUSH,
+    OPT_SOFT_FLUSH_LIMIT,
+    OPT_GUI,
+    OPT_COUNT
+};
+
+LONG result[OPT_COUNT];
+
+int main(int wantGUI)
 {
+    struct RDArgs *args;
     SysBase = *(struct ExecBase **)4;
     
-    SetTaskPri(FindTask(NULL), 120);
+    DOSBase = (struct DosLibrary *)OpenLibrary("dos.library", 37);
+    if (DOSBase == NULL)
+        return -1;
 
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 37);
-    if (IntuitionBase != NULL)
+    args = ReadArgs(RDA_TEMPLATE, result, NULL);
+
+    if (args)
     {
-        GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 37);
-        if (GfxBase != NULL)
+
+        if (!wantGUI) {
+            wantGUI = result[OPT_GUI];
+        }
+
+        FreeArgs(args);
+    }
+
+
+    if (wantGUI)
+    {
+        SetTaskPri(FindTask(NULL), 120);
+
+        IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 37);
+        if (IntuitionBase != NULL)
         {
-            DOSBase = (struct DosLibrary *)OpenLibrary("dos.library", 37);
-            if (DOSBase != NULL)
+            GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 37);
+            if (GfxBase != NULL)
             {
                 MUIMasterBase = OpenLibrary("muimaster.library", 0);
                 if (MUIMasterBase != NULL)
@@ -690,12 +724,13 @@ int main(int fromWorkbench)
                         CloseLibrary(GadToolsBase);
                     }
                 }
-                CloseLibrary((struct Library *)DOSBase);
+
+                CloseLibrary((struct Library *)GfxBase);
             }
-            CloseLibrary((struct Library *)GfxBase);
+            CloseLibrary((struct Library *)IntuitionBase);
         }
-        CloseLibrary((struct Library *)IntuitionBase);
     }
 
+    CloseLibrary((struct Library *)DOSBase);
     return 0;
 }

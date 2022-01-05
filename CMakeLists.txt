@@ -10,4 +10,4 @@ add_executable(EmuControl
     src/main.c
 )
 
-target_link_libraries(EmuControl mui amiga)
+target_link_libraries(EmuControl mui amiga devicetree)
