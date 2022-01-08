@@ -486,19 +486,31 @@ ULONG update()
     old_cmiss = cmiss;
 }
 
-
-
-ULONG SliderDispatcher(struct IClass *ic asm("a0"), Msg message asm("a1"), Object *o asm("a2"))
+ULONG SliderDispatcher(struct IClass *ic asm("a0"), Object *o asm("a2"), Msg message asm("a1"))
 {
-    static char str[10];
-    struct MUIP_Numeric_Stringify *m = (struct MUIP_Numeric_Stringify *)message;
-    if (m->MethodID == MUIM_Numeric_Stringify) {
-        ULONG val = (1 << m->value) - 1;
-        RawDoFmt("%ld", &val, stuffChar, &str);
-        return (ULONG)str;
+    static char str[16];
+
+    switch(message->MethodID)
+    {
+        case MUIM_Numeric_Stringify: {
+            char *s = &str[16];
+            struct MUIP_Numeric_Stringify *m = (struct MUIP_Numeric_Stringify *)message;
+            *--s = 0;
+            ULONG val = (1 << m->value) - 1;
+            if (val == 0)
+                *--s = '0';
+            else {
+                while (val)
+                {
+                    int rem = val % 10;
+                    val /= 10;
+                    *--s = rem + '0';
+                }
+            }
+            return (ULONG)s;
+        }
+        default: return DoSuperMethodA(ic, o, message);
     }
-    else
-        return DoSuperMethodA(ic, o, message);
 }
 
 ULONG UpdaterDispatcher(struct IClass *ic asm("a0"), Msg message asm("a1"), Object *o asm("a2"))
