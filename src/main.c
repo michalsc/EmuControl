@@ -19,6 +19,8 @@
 #include <clib/muimaster_protos.h>
 #include <clib/alib_protos.h>
 #include <utility/tagitem.h>
+#include <stdarg.h>
+#include <stdint.h>
 
 #include "mbox.h"
 
@@ -379,8 +381,386 @@ static inline void setDEBUG_HIGH(ULONG value)
     asm volatile("movec %0, #0xef"::"r"(value));
 }
 
-asm("stuffChar: move.l a0, -(a7); move.l (a3), a0; move.b  d0, (a0)+; move.l a0, (a3); move.l (a7)+, a0; rts");
-APTR stuffChar;
+typedef void (*putc_func)(void *data, char c);
+
+static int int_strlen(char *buf)
+{
+    int len = 0;
+
+    if (buf)
+        while(*buf++)
+            len++;
+
+    return len;
+}
+
+static void int_itoa(char *buf, char base, uintptr_t value, char zero_pad, int precision, int size_mod, char big, int alternate_form, int neg, char sign)
+{
+    int length = 0;
+
+    do {
+        char c = value % base;
+
+        if (c >= 10) {
+            if (big)
+                c += 'A'-10;
+            else
+                c += 'a'-10;
+        }
+        else
+            c += '0';
+
+        value = value / base;
+        buf[length++] = c;
+    } while(value != 0);
+
+    if (precision != 0)
+    {
+        while (length < precision)
+            buf[length++] = '0';
+    }
+    else if (size_mod != 0 && zero_pad)
+    {
+        int sz_mod = size_mod;
+        if (alternate_form)
+        {
+            if (base == 16) sz_mod -= 2;
+            else if (base == 8) sz_mod -= 1;
+        }
+        if (neg)
+            sz_mod -= 1;
+
+        while (length < sz_mod)
+            buf[length++] = '0';
+    }
+    if (alternate_form)
+    {
+        if (base == 8)
+            buf[length++] = '0';
+        if (base == 16) {
+            buf[length++] = big ? 'X' : 'x';
+            buf[length++] = '0';
+        }
+    }
+
+    if (neg)
+        buf[length++] = '-';
+    else {
+        if (sign == '+')
+            buf[length++] = '+';
+        else if (sign == ' ')
+            buf[length++] = ' ';
+    }
+
+    for (int i=0; i < length/2; i++)
+    {
+        char tmp = buf[i];
+        buf[i] = buf[length - i - 1];
+        buf[length - i - 1] = tmp;
+    }
+
+    buf[length] = 0;
+}
+
+void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format, va_list args)
+{
+    char tmpbuf[32];
+
+    while(*format)
+    {
+        char c;
+        char alternate_form = 0;
+        int size_mod = 0;
+        int length_mod = 0;
+        int precision = 0;
+        char zero_pad = 0;
+        char *str;
+        char sign = 0;
+        char leftalign = 0;
+        uintptr_t value = 0;
+        intptr_t ivalue = 0;
+
+        char big = 0;
+
+        c = *format++;
+
+        if (c != '%')
+        {
+            putc_f(putc_data, c);
+        }
+        else
+        {
+            c = *format++;
+
+            if (c == '#') {
+                alternate_form = 1;
+                c = *format++;
+            }
+
+            if (c == '-') {
+                leftalign = 1;
+                c = *format++;
+            }
+
+            if (c == ' ' || c == '+') {
+                sign = c;
+                c = *format++;
+            }
+
+            if (c == '0') {
+                zero_pad = 1;
+                c = *format++;
+            }
+
+            while(c >= '0' && c <= '9') {
+                size_mod = size_mod * 10;
+                size_mod = size_mod + c - '0';
+                c = *format++;
+            }
+
+            if (c == '.') {
+                c = *format++;
+                while(c >= '0' && c <= '9') {
+                    precision = precision * 10;
+                    precision = precision + c - '0';
+                    c = *format++;
+                }
+            }
+
+            big = 0;
+
+            if (c == 'h')
+            {
+                c = *format++;
+                if (c == 'h')
+                {
+                    c = *format++;
+                    length_mod = 1;
+                }
+                else length_mod = 2;
+            }
+            else if (c == 'l')
+            {
+                c = *format++;
+                if (c == 'l')
+                {
+                    c = *format++;
+                    length_mod = 8;
+                }
+                else length_mod = 4;
+            }
+            else if (c == 'j')
+            {
+                c = *format++;
+                length_mod = 9;
+            }
+            else if (c == 't')
+            {
+                c = *format++;
+                length_mod = 10;
+            }
+            else if (c == 'z')
+            {
+                c = *format++;
+                length_mod = 11;
+            }
+
+            switch (c) {
+                case 0:
+                    return;
+
+                case '%':
+                    putc_f(putc_data, '%');
+                    break;
+
+                case 'p':
+                    value = va_arg(args, uintptr_t);
+                    int_itoa(tmpbuf, 16, value, 1, 2*sizeof(uintptr_t), 2*sizeof(uintptr_t), big, 1, 0, sign);
+                    str = tmpbuf;
+                    size_mod -= int_strlen(str);
+                    while (*str) {
+                        putc_f(putc_data, *str++);
+                    }
+                    break;
+
+                case 'X':
+                    big = 1;
+                    /* fallthrough */
+                case 'x':
+                    switch (length_mod) {
+                        case 8:
+                            value = va_arg(args, uint64_t);
+                            break;
+                        case 9:
+                            value = va_arg(args, uintmax_t);
+                            break;
+                        case 10:
+                            value = va_arg(args, uintptr_t);
+                            break;
+                        case 11:
+                            value = va_arg(args, ULONG);
+                            break;
+                        default:
+                            value = va_arg(args, unsigned int);
+                            break;
+                    }
+                    int_itoa(tmpbuf, 16, value, zero_pad, precision, size_mod, big, alternate_form, 0, sign);
+                    str = tmpbuf;
+                    size_mod -= int_strlen(str);
+                    if (!leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    while(*str) {
+                        putc_f(putc_data, *str++);
+                    }
+                    if (leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    break;
+
+                case 'u':
+                    switch (length_mod) {
+                        case 8:
+                            value = va_arg(args, uint64_t);
+                            break;
+                        case 9:
+                            value = va_arg(args, uintmax_t);
+                            break;
+                        case 10:
+                            value = va_arg(args, uintptr_t);
+                            break;
+                        case 11:
+                            value = va_arg(args, ULONG);
+                            break;
+                        default:
+                            value = va_arg(args, unsigned int);
+                            break;
+                    }
+                    int_itoa(tmpbuf, 10, value, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
+                    str = tmpbuf;
+                    size_mod -= int_strlen(str);
+                    if (!leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    while(*str) {
+                        putc_f(putc_data, *str++);
+                    }
+                    if (leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    break;
+
+                case 'd':
+                case 'i':
+                    switch (length_mod) {
+                        case 8:
+                            ivalue = va_arg(args, int64_t);
+                            break;
+                        case 9:
+                            ivalue = va_arg(args, intmax_t);
+                            break;
+                        case 10:
+                            ivalue = va_arg(args, intptr_t);
+                            break;
+                        case 11:
+                            ivalue = va_arg(args, ULONG);
+                            break;
+                        default:
+                            ivalue = va_arg(args, int);
+                            break;
+                    }
+                    if (ivalue < 0)
+                        int_itoa(tmpbuf, 10, -ivalue, zero_pad, precision, size_mod, 0, alternate_form, 1, sign);
+                    else
+                        int_itoa(tmpbuf, 10, ivalue, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
+                    str = tmpbuf;
+                    size_mod -= int_strlen(str);
+                    if (!leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    while(*str) {
+                        putc_f(putc_data, *str++);
+                    }
+                    if (leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    break;
+
+                case 'o':
+                    switch (length_mod) {
+                        case 8:
+                            value = va_arg(args, uint64_t);
+                            break;
+                        case 9:
+                            value = va_arg(args, uintmax_t);
+                            break;
+                        case 10:
+                            value = va_arg(args, uintptr_t);
+                            break;
+                        case 11:
+                            value = va_arg(args, ULONG);
+                            break;
+                        default:
+                            value = va_arg(args, uint32_t);
+                            break;
+                    }
+                    int_itoa(tmpbuf, 8, value, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
+                    str = tmpbuf;
+                    size_mod -= int_strlen(str);
+                    if (!leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    while(*str) {
+                        putc_f(putc_data, *str++);
+                    }
+                    if (leftalign)
+                        while(size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    break;
+
+                case 'c':
+                    putc_f(putc_data, va_arg(args, int));
+                    break;
+
+                case 's':
+                    {
+                        str = va_arg(args, char *);
+                        do {
+                            if (*str == 0)
+                                break;
+                            else
+                                putc_f(putc_data, *str);
+                            size_mod--;
+                        } while(*str++ && --precision);
+                        while (size_mod-- > 0)
+                            putc_f(putc_data, ' ');
+                    }
+                    break;
+
+                default:
+                    putc_f(putc_data, c);
+                    break;
+            }
+        }
+    }
+}
+
+void putc_s(void *data, char c)
+{
+    char **ppchr = data;
+    char *pchr = *ppchr;
+    *pchr++ = c;
+    *pchr = 0;
+    *ppchr = pchr;
+}
+
+void _sprintf(char *buf, const char * restrict format, ...)
+{
+    va_list v;
+    va_start(v, format);
+    vkprintf_pc(putc_s, &buf, format, v);
+    va_end(v);
+}
 
 ULONG update()
 {
@@ -455,28 +835,18 @@ ULONG update()
         static char str_temp[10];
         static char str_volt[10];
 
-        APTR str_pptr = &str_temp;
-
         if (temp != 0)
         {
             temp = (temp + 50) / 100;
-            ULONG args[] = {
-                temp / 10,
-                (temp % 10),
-            };
 
-            RawDoFmt("%ld.%ld", args, stuffChar, &str_pptr);
+            _sprintf(str_temp, "%ld.%ld", temp / 10, temp % 10);
 
             set(CoreTemp, MUIA_Text_Contents, (ULONG)str_temp);
         }
 
         if (volt >= -16 && volt <= 8)
         {
-            ULONG args[] = {
-                volt*25 + 1200,
-            };
-
-            RawDoFmt("%ld mV", args, stuffChar, &str_pptr);
+            _sprintf(str_volt, "%ld mV", volt*25 + 1200);
 
             set(CoreVolt, MUIA_Text_Contents, (ULONG)str_volt);
         }
@@ -495,21 +865,10 @@ ULONG SliderDispatcher(struct IClass *ic asm("a0"), Object *o asm("a2"), Msg mes
     switch(message->MethodID)
     {
         case MUIM_Numeric_Stringify: {
-            char *s = &str[16];
             struct MUIP_Numeric_Stringify *m = (struct MUIP_Numeric_Stringify *)message;
-            *--s = 0;
             ULONG val = (1 << m->value) - 1;
-            if (val == 0)
-                *--s = '0';
-            else {
-                while (val)
-                {
-                    int rem = val % 10;
-                    val /= 10;
-                    *--s = rem + '0';
-                }
-            }
-            return (ULONG)s;
+            _sprintf(str, "%ld", val);
+            return (ULONG)str;
         }
         default: return DoSuperMethodA(ic, o, message);
     }
@@ -972,7 +1331,6 @@ void MUIMain()
                 ihn.ihn_Method = 0xdeadbeef;
 
                 char tmp_str[32];
-                APTR strptr = tmp_str;
 
                 DoMethod(app, MUIM_Application_AddInputHandler, &ihn);
 
@@ -996,10 +1354,10 @@ void MUIMain()
                 else
                     set(INSNDepth, MUIA_Numeric_Value, 256);
 
-                RawDoFmt("%08lx", &debug_low, stuffChar, &strptr);
+                _sprintf(tmp_str, "%08lx", debug_low);
                 set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
 
-                RawDoFmt("%08lx", &debug_high, stuffChar, &strptr);
+                _sprintf(tmp_str, "%08lx", debug_high);
                 set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
 
                 if (tmp & 0x000000f0)
