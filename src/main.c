@@ -379,7 +379,7 @@ static inline void setDEBUG_HIGH(ULONG value)
     asm volatile("movec %0, #0xef"::"r"(value));
 }
 
-asm("stuffChar: move.b  d0, (a3)+; rts");
+asm("stuffChar: move.l a0, -(a7); move.l (a3), a0; move.b  d0, (a0)+; move.l a0, (a3); move.l (a7)+, a0; rts");
 APTR stuffChar;
 
 ULONG update()
@@ -455,6 +455,8 @@ ULONG update()
         static char str_temp[10];
         static char str_volt[10];
 
+        APTR str_pptr = &str_temp;
+
         if (temp != 0)
         {
             temp = (temp + 50) / 100;
@@ -463,7 +465,7 @@ ULONG update()
                 (temp % 10),
             };
 
-            RawDoFmt("%ld.%ld", args, stuffChar, &str_temp);
+            RawDoFmt("%ld.%ld", args, stuffChar, &str_pptr);
 
             set(CoreTemp, MUIA_Text_Contents, (ULONG)str_temp);
         }
@@ -474,7 +476,7 @@ ULONG update()
                 volt*25 + 1200,
             };
 
-            RawDoFmt("%ld mV", args, stuffChar, &str_volt);
+            RawDoFmt("%ld mV", args, stuffChar, &str_pptr);
 
             set(CoreVolt, MUIA_Text_Contents, (ULONG)str_volt);
         }
@@ -779,8 +781,8 @@ BOOL previewOnly;
 
 void MUIMain()
 {
-    struct MUI_CustomClass *logSlider = MUI_CreateCustomClass(NULL, MUIC_Slider, NULL, 0, SliderDispatcher);
-    struct MUI_CustomClass *updater = MUI_CreateCustomClass(NULL, MUIC_Area, NULL, 0, UpdaterDispatcher);
+    struct MUI_CustomClass *logSlider = MUI_CreateCustomClass(NULL, MUIC_Slider, NULL, 4, SliderDispatcher);
+    struct MUI_CustomClass *updater = MUI_CreateCustomClass(NULL, MUIC_Area, NULL, 4, UpdaterDispatcher);
 
     Object *updaterObj;
     struct MUI_InputHandlerNode ihn;
@@ -970,6 +972,7 @@ void MUIMain()
                 ihn.ihn_Method = 0xdeadbeef;
 
                 char tmp_str[32];
+                APTR strptr = tmp_str;
 
                 DoMethod(app, MUIM_Application_AddInputHandler, &ihn);
 
@@ -993,10 +996,10 @@ void MUIMain()
                 else
                     set(INSNDepth, MUIA_Numeric_Value, 256);
 
-                RawDoFmt("%08lx", &debug_low, stuffChar, tmp_str);
+                RawDoFmt("%08lx", &debug_low, stuffChar, &strptr);
                 set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
 
-                RawDoFmt("%08lx", &debug_high, stuffChar, tmp_str);
+                RawDoFmt("%08lx", &debug_high, stuffChar, &strptr);
                 set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
 
                 if (tmp & 0x000000f0)
