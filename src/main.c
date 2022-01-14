@@ -1464,16 +1464,19 @@ void GUIMain()
     }
 }
 
-#define RDA_TEMPLATE "ICNT=InstructionCount/K/N,IRNG=InliningRange/K/N,LCNT=LoopCount/K/N,CACHE/S,SF=SoftFlush/S,SFL=SoftFlushLimit/K/N,GUI/S,PREVIEW/S"
+#define RDA_TEMPLATE "ICNT=InstructionCount/K/N,IRNG=InliningRange/K/N,LCNT=LoopCount/K/N,CACHE/S,NOCACHE/S,SF=SoftFlush/S,SFL=SoftFlushLimit/K/N,GUI/S,S=Silent/S,DEF=LoadDefaults/S,PREVIEW/S"
 
 enum {
     OPT_INSN_COUNT,
     OPT_INLINE_RANGE,
     OPT_LOOP_CNT,
     OPT_FAST_CACHE,
+    OPT_SLOW_CACHE,
     OPT_SOFT_FLUSH,
     OPT_SOFT_FLUSH_LIMIT,
     OPT_GUI,
+    OPT_SILENT,
+    OPT_DEFAULTS,
     OPT_PREVIEW,
     OPT_COUNT
 };
@@ -1493,12 +1496,56 @@ int main(int wantGUI)
 
     if (!wantGUI)
     {
+        ULONG silent = 0;
+
         args = ReadArgs(RDA_TEMPLATE, result, NULL);
 
         if (args)
         {
             wantGUI = result[OPT_GUI];
             previewOnly = result[OPT_PREVIEW];
+            silent = result[OPT_SILENT];
+
+            if (!silent)
+                Printf("%s\n", (ULONG)&VERSION_STRING[7]);
+
+            if (result[OPT_INSN_COUNT]) {
+                ULONG icnt = *(ULONG*)(result[OPT_INSN_COUNT]);
+                
+                if (icnt < 1)
+                    icnt = 2;
+                if (icnt > 256)
+                    icnt = 256;
+
+                if (!silent)
+                    Printf("- Changing JIT instruction depth to %ld\n", icnt);
+
+                APTR ssp = SuperState();
+                setINSN_DEPTH(icnt);
+                if (ssp)
+                    UserState(ssp);
+            }
+
+            if (result[OPT_SLOW_CACHE]) {
+                if (!silent)
+                    Printf("- Enabling checksummed slow JIT cache\n");
+
+                APTR ssp = SuperState();
+                setCACHE_IE(0);
+                if (ssp)
+                    UserState(ssp);
+            }
+
+            if (result[OPT_FAST_CACHE] && !result[OPT_SLOW_CACHE]) {
+
+                if (!silent)
+                    Printf("- Enabling fast JIT cache\n");
+
+                APTR ssp = SuperState();
+                setCACHE_IE(1);
+                if (ssp)
+                    UserState(ssp);
+            }
 
             FreeArgs(args);
         }
