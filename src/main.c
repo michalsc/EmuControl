@@ -1154,6 +1154,7 @@ void MUIMain()
                 MUIA_Application_Author, (ULONG)"Michal Schulz",
                 MUIA_Application_Description, (ULONG)APPNAME,
                 MUIA_Application_Base, (ULONG)"EMUCONTROL",
+                MUIA_Application_SingleTask, TRUE,
 
                 SubWindow, MainWindow = WindowObject,
                     MUIA_Window_Title, (ULONG)APPNAME,
