@@ -1318,6 +1318,12 @@ void MUIMain()
 
             DoMethod(MainWindow, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
                 (ULONG)app, 2, MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit);
+            
+            DoMethod(app, MUIM_Notify, MUIA_Application_DoubleStart, MUIV_EveryTime,
+                (ULONG)app, 3, MUIM_Set, MUIA_Application_Iconified, FALSE);
+
+            DoMethod(app, MUIM_Notify, MUIA_Application_DoubleStart, MUIV_EveryTime,
+                (ULONG)MainWindow, 1, MUIM_Window_ToFront);
 
             set(SoftFlush, MUIA_InputMode, MUIV_InputMode_Toggle);
             set(FastCache, MUIA_InputMode, MUIV_InputMode_Toggle);
@@ -1508,13 +1514,13 @@ int main(int wantGUI)
             silent = result[OPT_SILENT];
 
             if (!silent)
-                Printf("%s\n", (ULONG)&VERSION_STRING[7]);
+                Printf("%s\n", (ULONG)&VERSION_STRING[6]);
 
             if (result[OPT_INSN_COUNT]) {
                 ULONG icnt = *(ULONG*)(result[OPT_INSN_COUNT]);
                 
                 if (icnt < 1)
-                    icnt = 2;
+                    icnt = 1;
                 if (icnt > 256)
                     icnt = 256;
 
