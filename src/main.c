@@ -844,9 +844,9 @@ ULONG update()
             set(CoreTemp, MUIA_Text_Contents, (ULONG)str_temp);
         }
 
-        if (volt >= -16 && volt <= 8)
+        if (volt != 0)
         {
-            _sprintf(str_volt, "%ld mV", volt*25 + 1200);
+            _sprintf(str_volt, "%ld mV", (volt + 500) / 1000);
 
             set(CoreVolt, MUIA_Text_Contents, (ULONG)str_volt);
         }
