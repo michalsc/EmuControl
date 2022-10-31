@@ -142,9 +142,11 @@ void InitMailBox()
         {
             int size_cells = 1;
             int address_cells = 1;
+            int cpu_address_cells = 1;
 
             const ULONG * siz = GetPropValueRecursive(key, "#size_cells", DeviceTreeBase);
             const ULONG * addr = GetPropValueRecursive(key, "#address-cells", DeviceTreeBase);
+            const ULONG * cpu_addr = DT_GetPropValue(DT_FindProperty(DT_OpenKey("/"), "#address-cells"));
 
             if (siz != NULL)
                 size_cells = *siz;
@@ -152,10 +154,13 @@ void InitMailBox()
             if (addr != NULL)
                 address_cells = *addr;
 
+            if (cpu_addr != NULL)
+                cpu_address_cells = *cpu_addr;
+
             const ULONG *reg = DT_GetPropValue(DT_FindProperty(key, "ranges"));
 
             ULONG phys_vc4 = reg[address_cells - 1];
-            ULONG phys_cpu = reg[2 * address_cells - 1];
+            ULONG phys_cpu = reg[address_cells + cpu_address_cells - 1];
 
             MailBox = (APTR)((ULONG)MailBox - phys_vc4 + phys_cpu);
 
