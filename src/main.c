@@ -79,12 +79,12 @@ CONST_APTR GetPropValueRecursive(APTR key, CONST_STRPTR property, APTR DeviceTre
 {
     do {
         /* Find the property first */
-        APTR property = DT_FindProperty(key, property);
+        APTR prop = DT_FindProperty(key, property);
 
-        if (property)
+        if (prop)
         {
             /* If property is found, get its value and exit */
-            return DT_GetPropValue(property);
+            return DT_GetPropValue(prop);
         }
         
         /* Property was not found, go to the parent and repeat */
