@@ -29,35 +29,6 @@
 #include "mbox.h"
 #include "presets.h"
 
-int main(int);
-
-/* Startup code including workbench message support */
-int _start()
-{
-    struct ExecBase *SysBase = *(struct ExecBase **)4;
-    struct Process *p = NULL;
-    struct WBStartup *wbmsg = NULL;
-    int ret = 0;
-
-    p = (struct Process *)SysBase->ThisTask;
-
-    if (p->pr_CLI == 0)
-    {
-        WaitPort(&p->pr_MsgPort);
-        wbmsg = (struct WBStartup *)GetMsg(&p->pr_MsgPort);
-    }
-
-    ret = main(wbmsg ? 1 : 0);
-
-    if (wbmsg)
-    {
-        Forbid();
-        ReplyMsg((struct Message *)wbmsg);
-    }
-
-    return ret;
-}
-
 struct ExecBase *       SysBase;
 struct IntuitionBase *  IntuitionBase;
 struct GfxBase *        GfxBase;
@@ -494,7 +465,7 @@ static inline void setDEBUG_HIGH(ULONG value)
 
 typedef void (*putc_func)(void *data, char c);
 
-static int int_strlen(char *buf)
+int strlen(char *buf)
 {
     int len = 0;
 
@@ -688,7 +659,7 @@ void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format
                     value = va_arg(args, uintptr_t);
                     int_itoa(tmpbuf, 16, value, 1, 2*sizeof(uintptr_t), 2*sizeof(uintptr_t), big, 1, 0, sign);
                     str = tmpbuf;
-                    size_mod -= int_strlen(str);
+                    size_mod -= strlen(str);
                     while (*str) {
                         putc_f(putc_data, *str++);
                     }
@@ -717,7 +688,7 @@ void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format
                     }
                     int_itoa(tmpbuf, 16, value, zero_pad, precision, size_mod, big, alternate_form, 0, sign);
                     str = tmpbuf;
-                    size_mod -= int_strlen(str);
+                    size_mod -= strlen(str);
                     if (!leftalign)
                         while(size_mod-- > 0)
                             putc_f(putc_data, ' ');
@@ -749,7 +720,7 @@ void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format
                     }
                     int_itoa(tmpbuf, 10, value, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
                     str = tmpbuf;
-                    size_mod -= int_strlen(str);
+                    size_mod -= strlen(str);
                     if (!leftalign)
                         while(size_mod-- > 0)
                             putc_f(putc_data, ' ');
@@ -785,7 +756,7 @@ void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format
                     else
                         int_itoa(tmpbuf, 10, ivalue, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
                     str = tmpbuf;
-                    size_mod -= int_strlen(str);
+                    size_mod -= strlen(str);
                     if (!leftalign)
                         while(size_mod-- > 0)
                             putc_f(putc_data, ' ');
@@ -817,7 +788,7 @@ void vkprintf_pc(putc_func putc_f, void *putc_data, const char * restrict format
                     }
                     int_itoa(tmpbuf, 8, value, zero_pad, precision, size_mod, 0, alternate_form, 0, sign);
                     str = tmpbuf;
-                    size_mod -= int_strlen(str);
+                    size_mod -= strlen(str);
                     if (!leftalign)
                         while(size_mod-- > 0)
                             putc_f(putc_data, ' ');
@@ -969,93 +940,90 @@ ULONG update()
     old_cmiss = cmiss;
 }
 
+struct Library *AslBase = NULL;
+
 ULONG DoSavePreset()
 {
-    struct Library *AslBase = OpenLibrary("asl.library", 0);
     extern const char default_dir[];
-    if (AslBase != NULL)
+
+    struct FileRequester *fr = AllocAslRequest(ASL_FileRequest, NULL);
+    if (fr != NULL)
     {
-        struct FileRequester *fr = AllocAslRequest(ASL_FileRequest, NULL);
-        if (fr != NULL)
+        BOOL result = AslRequestTags(fr,
+            ASLFR_TitleText, (ULONG)"Give preset a name...",
+            ASLFR_DoSaveMode, TRUE,
+            ASLFR_RejectIcons, TRUE,
+            ASLFR_InitialDrawer, (ULONG)default_dir,
+            TAG_DONE, 0UL
+        );
+
+        if (result)
         {
-            BOOL result = AslRequestTags(fr,
-                ASLFR_TitleText, (ULONG)"Give preset a name...",
-                ASLFR_DoSaveMode, TRUE,
-                ASLFR_RejectIcons, TRUE,
-                ASLFR_InitialDrawer, (ULONG)default_dir,
-                TAG_DONE, 0UL
-            );
-
-            if (result)
-            {
-                struct Preset p;
-                char *charptr;
-                char *c;
-                ULONG tmp;
-                
-                get(DebugMin, MUIA_String_Contents, (ULONG*)&charptr);
-                p.pr_DebugStart = 0;
-                c = charptr;
-                while (*c) {
-                    p.pr_DebugStart <<= 4;
-                    if (*c >= '0' && *c <= '9')
-                        p.pr_DebugStart |= (*c - '0') & 0xf;
-                    else if (*c >= 'A' && *c <= 'F')
-                        p.pr_DebugStart |= (*c - 'A' + 10) & 0xf;
-                    else if (*c >= 'a' && *c <= 'f')
-                        p.pr_DebugStart |= (*c - 'a' + 10) & 0xf;
-                    c++;
-                }
-
-                get(DebugMax, MUIA_String_Contents, (ULONG*)&charptr);
-                p.pr_DebugEnd = 0;
-                c = charptr;
-                while (*c) {
-                    p.pr_DebugEnd <<= 4;
-                    if (*c >= '0' && *c <= '9')
-                        p.pr_DebugEnd |= (*c - '0') & 0xf;
-                    else if (*c >= 'A' && *c <= 'F')
-                        p.pr_DebugEnd |= (*c - 'A' + 10) & 0xf;
-                    else if (*c >= 'a' && *c <= 'f')
-                        p.pr_DebugEnd |= (*c - 'a' + 10) & 0xf;
-                    c++;
-                }
-
-                p.pr_DebugFlag = 0;
-                get(EnableDisasm, MUIA_Selected, &tmp);
-                if (tmp) p.pr_DebugFlag |= DBGF_DISASM_ON;
-                get(EnableDebug, MUIA_Selected, &tmp);
-                if (tmp) p.pr_DebugFlag |= DBGF_DEBUG_ON;
-
-                p.pr_JITFlags = 0;
-                get(SlowCHIP, MUIA_Selected, &tmp);
-                if (tmp) p.pr_JITFlags |= JITF_SLOW_CHIP;
-                get(SlowDBF, MUIA_Selected, &tmp);
-                if (tmp) p.pr_JITFlags |= JITF_SLOW_DBF;
-                get(BlitWait, MUIA_Selected, &tmp);
-                if (tmp) p.pr_JITFlags |= JITF_BLIT_WAIT;
-                get(FastCache, MUIA_Selected, &tmp);
-                if (tmp) p.pr_JITFlags |= JITF_FAST_CACHE;
-                get(SoftFlush, MUIA_Selected, &tmp);
-                if (tmp) p.pr_JITFlags |= JITF_SOFT_FLUSH;
-                get(CCRDepth, MUIA_Numeric_Value, &tmp);
-                p.pr_CCRDepth = tmp;
-                get(INSNDepth, MUIA_Numeric_Value, &tmp);
-                p.pr_INSNDepth = tmp - 1;
-                get(LoopCount, MUIA_Numeric_Value, &tmp);
-                p.pr_InlineLoopCnt = tmp;
-                get(SoftThresh, MUIA_Numeric_Value, &tmp);
-                p.pr_SoftFlushThreshold = tmp;
-                get(InlineRange, MUIA_Numeric_Value, &tmp);
-                p.pr_InlineRange = (1 << tmp) - 1;
-                
-                SavePreset(&p, fr->fr_File, fr->fr_Drawer);
+            struct Preset p;
+            char *charptr;
+            char *c;
+            ULONG tmp;
+            
+            get(DebugMin, MUIA_String_Contents, (ULONG*)&charptr);
+            p.pr_DebugStart = 0;
+            c = charptr;
+            while (*c) {
+                p.pr_DebugStart <<= 4;
+                if (*c >= '0' && *c <= '9')
+                    p.pr_DebugStart |= (*c - '0') & 0xf;
+                else if (*c >= 'A' && *c <= 'F')
+                    p.pr_DebugStart |= (*c - 'A' + 10) & 0xf;
+                else if (*c >= 'a' && *c <= 'f')
+                    p.pr_DebugStart |= (*c - 'a' + 10) & 0xf;
+                c++;
             }
 
-            FreeAslRequest(fr);
+            get(DebugMax, MUIA_String_Contents, (ULONG*)&charptr);
+            p.pr_DebugEnd = 0;
+            c = charptr;
+            while (*c) {
+                p.pr_DebugEnd <<= 4;
+                if (*c >= '0' && *c <= '9')
+                    p.pr_DebugEnd |= (*c - '0') & 0xf;
+                else if (*c >= 'A' && *c <= 'F')
+                    p.pr_DebugEnd |= (*c - 'A' + 10) & 0xf;
+                else if (*c >= 'a' && *c <= 'f')
+                    p.pr_DebugEnd |= (*c - 'a' + 10) & 0xf;
+                c++;
+            }
+
+            p.pr_DebugFlag = 0;
+            get(EnableDisasm, MUIA_Selected, &tmp);
+            if (tmp) p.pr_DebugFlag |= DBGF_DISASM_ON;
+            get(EnableDebug, MUIA_Selected, &tmp);
+            if (tmp) p.pr_DebugFlag |= DBGF_DEBUG_ON;
+
+            p.pr_JITFlags = 0;
+            get(SlowCHIP, MUIA_Selected, &tmp);
+            if (tmp) p.pr_JITFlags |= JITF_SLOW_CHIP;
+            get(SlowDBF, MUIA_Selected, &tmp);
+            if (tmp) p.pr_JITFlags |= JITF_SLOW_DBF;
+            get(BlitWait, MUIA_Selected, &tmp);
+            if (tmp) p.pr_JITFlags |= JITF_BLIT_WAIT;
+            get(FastCache, MUIA_Selected, &tmp);
+            if (tmp) p.pr_JITFlags |= JITF_FAST_CACHE;
+            get(SoftFlush, MUIA_Selected, &tmp);
+            if (tmp) p.pr_JITFlags |= JITF_SOFT_FLUSH;
+            get(CCRDepth, MUIA_Numeric_Value, &tmp);
+            p.pr_CCRDepth = tmp;
+            get(INSNDepth, MUIA_Numeric_Value, &tmp);
+            p.pr_INSNDepth = tmp - 1;
+            get(LoopCount, MUIA_Numeric_Value, &tmp);
+            p.pr_InlineLoopCnt = tmp;
+            get(SoftThresh, MUIA_Numeric_Value, &tmp);
+            p.pr_SoftFlushThreshold = tmp;
+            get(InlineRange, MUIA_Numeric_Value, &tmp);
+            p.pr_InlineRange = (1 << tmp) - 1;
+            
+            SavePreset(&p, fr->fr_File, fr->fr_Drawer);
         }
 
-        CloseLibrary(AslBase);
+        FreeAslRequest(fr);
     }
 
     return 0;
@@ -1063,95 +1031,90 @@ ULONG DoSavePreset()
 
 ULONG DoLoadPreset()
 {
-    struct Library *AslBase = OpenLibrary("asl.library", 0);
     extern const char default_dir[];
-    if (AslBase != NULL)
+
+    struct FileRequester *fr = AllocAslRequest(ASL_FileRequest, NULL);
+    if (fr != NULL)
     {
-        struct FileRequester *fr = AllocAslRequest(ASL_FileRequest, NULL);
-        if (fr != NULL)
+        BOOL result = AslRequestTags(fr,
+            ASLFR_TitleText, (ULONG)"Open existing preset...",
+            ASLFR_DoSaveMode, FALSE,
+            ASLFR_RejectIcons, TRUE,
+            ASLFR_InitialDrawer, (ULONG)default_dir,
+            TAG_DONE, 0UL
+        );
+
+        if (result)
         {
-            BOOL result = AslRequestTags(fr,
-                ASLFR_TitleText, (ULONG)"Open existing preset...",
-                ASLFR_DoSaveMode, FALSE,
-                ASLFR_RejectIcons, TRUE,
-                ASLFR_InitialDrawer, (ULONG)default_dir,
-                TAG_DONE, 0UL
-            );
+            struct Preset p;
+            char *charptr;
+            char *c;
+            ULONG tmp;
 
-            if (result)
+            if (LoadPreset(&p, fr->fr_File, fr->fr_Drawer))
             {
-                struct Preset p;
-                char *charptr;
-                char *c;
-                ULONG tmp;
+                char tmp_str[32];
+                _sprintf(tmp_str, "%08lx", p.pr_DebugStart);
+                set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
 
-                if (LoadPreset(&p, fr->fr_File, fr->fr_Drawer))
-                {
-                    char tmp_str[32];
-                    _sprintf(tmp_str, "%08lx", p.pr_DebugStart);
-                    set(DebugMin, MUIA_String_Contents, (ULONG)tmp_str);
+                _sprintf(tmp_str, "%08lx", p.pr_DebugEnd);
+                set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
 
-                    _sprintf(tmp_str, "%08lx", p.pr_DebugEnd);
-                    set(DebugMax, MUIA_String_Contents, (ULONG)tmp_str);
+                if (p.pr_DebugFlag & DBGF_DEBUG_ON)
+                    set(EnableDebug, MUIA_Selected, TRUE);
+                else
+                    set(EnableDebug, MUIA_Selected, FALSE);
 
-                    if (p.pr_DebugFlag & DBGF_DEBUG_ON)
-                        set(EnableDebug, MUIA_Selected, TRUE);
-                    else
-                        set(EnableDebug, MUIA_Selected, FALSE);
+                if (p.pr_DebugFlag & DBGF_DISASM_ON)
+                    set(EnableDisasm, MUIA_Selected, TRUE);
+                else
+                    set(EnableDisasm, MUIA_Selected, FALSE);
 
-                    if (p.pr_DebugFlag & DBGF_DISASM_ON)
-                        set(EnableDisasm, MUIA_Selected, TRUE);
-                    else
-                        set(EnableDisasm, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_FAST_CACHE)
+                    set(FastCache, MUIA_Selected, TRUE);
+                else
+                    set(FastCache, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_FAST_CACHE)
-                        set(FastCache, MUIA_Selected, TRUE);
-                    else
-                        set(FastCache, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_FAST_CACHE)
+                    set(FastCache, MUIA_Selected, TRUE);
+                else
+                    set(FastCache, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_FAST_CACHE)
-                        set(FastCache, MUIA_Selected, TRUE);
-                    else
-                        set(FastCache, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_SOFT_FLUSH)
+                    set(SoftFlush, MUIA_Selected, TRUE);
+                else
+                    set(SoftFlush, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_SOFT_FLUSH)
-                        set(SoftFlush, MUIA_Selected, TRUE);
-                    else
-                        set(SoftFlush, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_SLOW_CHIP)
+                    set(SlowCHIP, MUIA_Selected, TRUE);
+                else
+                    set(SlowCHIP, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_SLOW_CHIP)
-                        set(SlowCHIP, MUIA_Selected, TRUE);
-                    else
-                        set(SlowCHIP, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_SLOW_DBF)
+                    set(SlowDBF, MUIA_Selected, TRUE);
+                else
+                    set(SlowDBF, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_SLOW_DBF)
-                        set(SlowDBF, MUIA_Selected, TRUE);
-                    else
-                        set(SlowDBF, MUIA_Selected, FALSE);
+                if (p.pr_JITFlags & JITF_BLIT_WAIT)
+                    set(BlitWait, MUIA_Selected, TRUE);
+                else
+                    set(BlitWait, MUIA_Selected, FALSE);
 
-                    if (p.pr_JITFlags & JITF_BLIT_WAIT)
-                        set(BlitWait, MUIA_Selected, TRUE);
-                    else
-                        set(BlitWait, MUIA_Selected, FALSE);
+                set(CCRDepth, MUIA_Numeric_Value, p.pr_CCRDepth);
+                set(INSNDepth, MUIA_Numeric_Value, p.pr_INSNDepth + 1);
+                set(LoopCount, MUIA_Numeric_Value, p.pr_InlineLoopCnt);
+                set(SoftThresh, MUIA_Numeric_Value, p.pr_SoftFlushThreshold);
 
-                    set(CCRDepth, MUIA_Numeric_Value, p.pr_CCRDepth);
-                    set(INSNDepth, MUIA_Numeric_Value, p.pr_INSNDepth + 1);
-                    set(LoopCount, MUIA_Numeric_Value, p.pr_InlineLoopCnt);
-                    set(SoftThresh, MUIA_Numeric_Value, p.pr_SoftFlushThreshold);
-
-                    for (int i=0; i <= 16; i++) {
-                        if ((1 << i) > p.pr_InlineRange) {
-                            set(InlineRange, MUIA_Numeric_Value, i);
-                            break;
-                        }
+                for (int i=0; i <= 16; i++) {
+                    if ((1 << i) > p.pr_InlineRange) {
+                        set(InlineRange, MUIA_Numeric_Value, i);
+                        break;
                     }
                 }
             }
-
-            FreeAslRequest(fr);
         }
 
-        CloseLibrary(AslBase);
+        FreeAslRequest(fr);
     }
 
     return 0;
@@ -1984,6 +1947,12 @@ int main(int wantGUI)
     if (DOSBase == NULL)
         return -1;
 
+    AslBase = OpenLibrary("asl.library", 0);
+    if (AslBase == NULL) {
+        CloseLibrary((struct Library *)DOSBase);
+        return -1;
+    }
+
     if (!wantGUI)
     {
         ULONG silent = 0;
@@ -2262,6 +2231,7 @@ int main(int wantGUI)
         }
     }
 
+    CloseLibrary(AslBase);
     CloseLibrary((struct Library *)DOSBase);
     return 0;
 }

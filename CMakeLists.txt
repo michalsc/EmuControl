@@ -9,6 +9,7 @@ if(NOT TARGET devicetree)
 endif()
 
 add_executable(EmuControl
+    src/startup.c
     src/main.c
     src/mbox.c
     src/presets.c
