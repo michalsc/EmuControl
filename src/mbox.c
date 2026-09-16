@@ -16,6 +16,7 @@
 #include <proto/exec.h>
 #include <proto/expansion.h>
 #include <proto/devicetree.h>
+#include <proto/mailbox.h>
 
 #include <libraries/configregs.h>
 #include <libraries/configvars.h>
@@ -29,98 +30,140 @@
 #define MBOX_CHANMASK 0xF
 
 extern APTR MailBox;
+extern APTR MailboxBase;
+
 UBYTE __req[256];
 
 static inline uint32_t LE32(uint32_t x) { return __builtin_bswap32(x); }
 
 static uint32_t mbox_recv(uint32_t channel)
 {
-	volatile uint32_t *mbox_read = (uint32_t*)(MailBox);
-	volatile uint32_t *mbox_status = (uint32_t*)((uintptr_t)MailBox + 0x18);
-	uint32_t response, status;
+    volatile uint32_t *mbox_read = (uint32_t*)(MailBox);
+    volatile uint32_t *mbox_status = (uint32_t*)((uintptr_t)MailBox + 0x18);
+    uint32_t response, status;
 
-	do
-	{
-		do
-		{
-			status = LE32(*mbox_status);
-			asm volatile("nop");
-		}
-		while (status & MBOX_RX_EMPTY);
+    do
+    {
+        do
+        {
+            status = LE32(*mbox_status);
+            asm volatile("nop");
+        }
+        while (status & MBOX_RX_EMPTY);
 
-		asm volatile("nop");
-		response = LE32(*mbox_read);
-		asm volatile("nop");
-	}
-	while ((response & MBOX_CHANMASK) != channel);
+        asm volatile("nop");
+        response = LE32(*mbox_read);
+        asm volatile("nop");
+    }
+    while ((response & MBOX_CHANMASK) != channel);
 
-	return (response & ~MBOX_CHANMASK);
+    return (response & ~MBOX_CHANMASK);
 }
 
 static void mbox_send(uint32_t channel, uint32_t data)
 {
-	volatile uint32_t *mbox_write = (uint32_t*)((uintptr_t)MailBox + 0x20);
-	volatile uint32_t *mbox_status = (uint32_t*)((uintptr_t)MailBox + 0x18);
-	uint32_t status;
+    volatile uint32_t *mbox_write = (uint32_t*)((uintptr_t)MailBox + 0x20);
+    volatile uint32_t *mbox_status = (uint32_t*)((uintptr_t)MailBox + 0x18);
+    uint32_t status;
 
-	data &= ~MBOX_CHANMASK;
-	data |= channel & MBOX_CHANMASK;
+    data &= ~MBOX_CHANMASK;
+    data |= channel & MBOX_CHANMASK;
 
-	do
-	{
-		status = LE32(*mbox_status);
-		asm volatile("nop");
-	}
-	while (status & MBOX_TX_FULL);
+    do
+    {
+        status = LE32(*mbox_status);
+        asm volatile("nop");
+    }
+    while (status & MBOX_TX_FULL);
 
-	asm volatile("nop");
-	*mbox_write = LE32(data);
+    asm volatile("nop");
+    *mbox_write = LE32(data);
 }
 
 ULONG get_core_temperature()
 {
-    struct ExecBase *SysBase = *(struct ExecBase **)4;
+    if (MailboxBase)
+    {
+        ULONG *FBReq = (ULONG*)__req;
 
-    ULONG *FBReq = (ULONG*)(((ULONG)__req + 31) & ~31);
-    ULONG len = 8*4;
+        FBReq[0] = 4*8;
+        FBReq[1] = 0;
+        FBReq[2] = 0x00030006;
+        FBReq[3] = 8;
+        FBReq[4] = 0;
+        FBReq[5] = 0;
+        FBReq[6] = 0;
+        FBReq[7] = 0;
+        
+        MB_RawCommand(FBReq);
 
-    FBReq[0] = LE32(4*8);
-    FBReq[1] = 0;
-    FBReq[2] = LE32(0x00030006);
-    FBReq[3] = LE32(8);
-    FBReq[4] = 0;
-    FBReq[5] = 0;
-    FBReq[6] = 0;
-    FBReq[7] = 0;
+        return FBReq[6];
+    }
+    else
+    {
+        struct ExecBase *SysBase = *(struct ExecBase **)4;
 
-    CachePreDMA(FBReq, &len, 0);
-    mbox_send(8, (ULONG)FBReq);
-    mbox_recv(8);
-    CachePostDMA(FBReq, &len, 0);
+        ULONG *FBReq = (ULONG*)(((ULONG)__req + 31) & ~31);
+        ULONG len = 8*4;
 
-    return LE32(FBReq[6]);
+        FBReq[0] = LE32(4*8);
+        FBReq[1] = 0;
+        FBReq[2] = LE32(0x00030006);
+        FBReq[3] = LE32(8);
+        FBReq[4] = 0;
+        FBReq[5] = 0;
+        FBReq[6] = 0;
+        FBReq[7] = 0;
+
+        CachePreDMA(FBReq, &len, 0);
+        mbox_send(8, (ULONG)FBReq);
+        mbox_recv(8);
+        CachePostDMA(FBReq, &len, 0);
+
+        return LE32(FBReq[6]);
+    }
 }
 
 ULONG get_core_voltage()
 {
-    struct ExecBase *SysBase = *(struct ExecBase **)4;
+    if (MailboxBase)
+    {
+        ULONG *FBReq = (ULONG*)__req;
 
-    ULONG *FBReq = (ULONG*)(((ULONG)__req + 31) & ~31);
-    ULONG len = 8*4;
+        FBReq[0] = 4*8;
+        FBReq[1] = 0;
+        FBReq[2] = 0x00030003;
+        FBReq[3] = 8;
+        FBReq[4] = 0;
+        FBReq[5] = 1;
+        FBReq[6] = 0;
+        FBReq[7] = 0;
+        
+        MB_RawCommand(FBReq);
 
-    FBReq[0] = LE32(4*8);
-    FBReq[1] = 0;
-    FBReq[2] = LE32(0x00030003);
-    FBReq[3] = LE32(8);
-    FBReq[4] = 0;
-    FBReq[5] = LE32(1);
-    FBReq[6] = 0;
-    FBReq[7] = 0;
+        return FBReq[6];
+    }
+    else
+    {
+        struct ExecBase *SysBase = *(struct ExecBase **)4;
 
-    CachePreDMA(FBReq, &len, 0);
-    mbox_send(8, (ULONG)FBReq);
-    mbox_recv(8);
-    CachePostDMA(FBReq, &len, 0);
+        ULONG *FBReq = (ULONG*)(((ULONG)__req + 31) & ~31);
+        ULONG len = 8*4;
 
-    return LE32(FBReq[6]);
+        FBReq[0] = LE32(4*8);
+        FBReq[1] = 0;
+        FBReq[2] = LE32(0x00030003);
+        FBReq[3] = LE32(8);
+        FBReq[4] = 0;
+        FBReq[5] = LE32(1);
+        FBReq[6] = 0;
+        FBReq[7] = 0;
+
+        CachePreDMA(FBReq, &len, 0);
+        mbox_send(8, (ULONG)FBReq);
+        mbox_recv(8);
+        CachePostDMA(FBReq, &len, 0);
+
+        return LE32(FBReq[6]);
+    }
 }

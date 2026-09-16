@@ -18,6 +18,7 @@
 #include <proto/gadtools.h>
 #include <proto/devicetree.h>
 #include <proto/asl.h>
+#include <proto/mailbox.h>
 #include <clib/muimaster_protos.h>
 #include <clib/alib_protos.h>
 #include <utility/tagitem.h>
@@ -35,6 +36,7 @@ struct GfxBase *        GfxBase;
 struct Library *        GadToolsBase;
 struct DosLibrary *     DOSBase;
 struct Library *        MUIMasterBase;
+APTR                    MailboxBase;
 APTR                    MailBox;
 
 #define APPNAME "EmuControl"
@@ -75,6 +77,12 @@ void InitMailBox()
 {
     APTR key;
     APTR DeviceTreeBase = OpenResource("devicetree.resource");
+    MailboxBase = OpenResource("mailbox.resource");
+
+    if (MailboxBase != NULL) {
+        MailBox = NULL;
+        return;
+    }
 
     if (DeviceTreeBase)
     {

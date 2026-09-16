@@ -8,6 +8,10 @@ if(NOT TARGET devicetree)
     add_subdirectory(devicetree.resource EXCLUDE_FROM_ALL)
 endif()
 
+if(NOT TARGET mailbox)
+    add_subdirectory(mailbox.resource EXCLUDE_FROM_ALL)
+endif()
+
 add_executable(EmuControl
     src/startup.c
     src/main.c
@@ -19,7 +23,7 @@ target_link_options(EmuControl PRIVATE -ffreestanding -m68040 -nostdlib -nostart
 target_compile_options(EmuControl PRIVATE -Os -m68040 -m68881 -fomit-frame-pointer)
 target_compile_definitions(EmuControl PRIVATE VERSION_STRING="${VERSTRING}")
 target_include_directories(EmuControl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(EmuControl mui amiga devicetree)
+target_link_libraries(EmuControl mui amiga devicetree mailbox)
 
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/EmuControl DESTINATION EmuControl/)
 install(FILES EmuControl.info DESTINATION EmuControl/)
